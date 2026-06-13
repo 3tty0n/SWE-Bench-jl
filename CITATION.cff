@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use SWE-bench-jl in your research, please cite it as below."
+type: software
+title: "SWE-bench-jl: An Execution-Validated Julia SWE-bench-Style Benchmark"
+authors:
+  - family-names: Izawa
+    given-names: Yusuke
+version: "0.1.0"
+date-released: "2026-06-13"
+year: 2026
+license: MIT
+url: "https://github.com/3tty0n/SWE-bench-jl"
+repository-code: "https://github.com/3tty0n/SWE-bench-jl"
+abstract: >
+  SWE-bench-jl is the first curated, execution-validated, Julia-specific SWE-bench-style
+  benchmark. It contains 45 real GitHub bug-fix tasks from five established Julia packages,
+  with a SWE-bench-compatible instance schema and a pure-Julia evaluation harness that
+  decides resolved by running each package's test suite before and after a candidate patch.
+keywords:
+  - julia
+  - benchmark
+  - software-engineering
+  - llm
+  - code-generation
+  - swe-bench

@@ -1,0 +1,170 @@
+#!/usr/bin/env julia
+# swebenchjl -- CLI for the SWE-bench-jl evaluator.
+#
+# Mirrors the argparse subcommands/flags of benchmark/swebench/harness/swebench_eval.py:
+#
+#   swebenchjl [--julia BIN] [--work DIR] validate  <candidates.jsonl> --out <instances.jsonl>
+#                                                    [--timeout S] [--keep-worktrees] [--limit N]
+#   swebenchjl [--julia BIN] [--work DIR] eval      <instances.jsonl> <predictions.jsonl> --out <report.json>
+#                                                    [--timeout S] [--keep-worktrees]
+#   swebenchjl [--julia BIN] [--work DIR] run-one   <instances.jsonl> <instance_id> [--gold | --model-patch FILE]
+#                                                    [--timeout S]
+#   swebenchjl --self-test
+#
+# Subcommands dispatch on a table so a later phase can register `export-official`
+# without touching the parser core.
+
+import Pkg
+Pkg.activate(normpath(joinpath(@__DIR__, "..")); io=devnull)
+
+using SWEBenchJl
+using SWEBenchJl: self_test, RunOneError
+
+# Default the env-build/test subprocesses to the SAME binary running this CLI, not bare
+# `julia` on PATH -- under juliaup the PATH `julia` is a launcher that re-resolves the
+# channel per call (and can block on the juliaup config lock), stalling every subprocess.
+const DEFAULT_JULIA = get(ENV, "JULIA_BIN", Base.julia_cmd().exec[1])
+const DEFAULT_WORK = normpath(joinpath(@__DIR__, "..", "work"))
+
+const USAGE = """
+usage: swebenchjl [--julia BIN] [--work DIR] <subcommand> ...
+
+subcommands:
+  validate        <candidates.jsonl> --out <instances.jsonl> [--timeout S] [--keep-worktrees] [--limit N]
+  eval            <instances.jsonl> <predictions.jsonl> --out <report.json> [--timeout S] [--keep-worktrees]
+  run-one         <instances.jsonl> <instance_id> [--gold | --model-patch FILE] [--timeout S]
+  export-official <instances.jsonl> --out <official.jsonl>
+  --self-test
+"""
+
+# --- tiny option-parsing helpers ------------------------------------------------
+
+# Pull `--flag VALUE` (or `--flag=VALUE`) out of args; returns (value_or_default, rest).
+function take_opt!(args::Vector{String}, name::String, default)
+    i = 1
+    while i <= length(args)
+        a = args[i]
+        if a == name
+            i + 1 <= length(args) || error("$name requires a value")
+            val = args[i+1]
+            deleteat!(args, i:i+1)
+            return val, args
+        elseif startswith(a, name * "=")
+            val = a[length(name)+2:end]
+            deleteat!(args, i)
+            return val, args
+        end
+        i += 1
+    end
+    return default, args
+end
+
+# Pull a boolean `--flag` out of args; returns (present::Bool, rest).
+function take_flag!(args::Vector{String}, name::String)
+    i = findfirst(==(name), args)
+    if i === nothing
+        return false, args
+    end
+    deleteat!(args, i)
+    return true, args
+end
+
+usage_error(msg) = (println(stderr, msg); println(stderr, USAGE); exit(2))
+
+# --- subcommand handlers --------------------------------------------------------
+
+function cmd_validate(global_opts, rest::Vector{String})
+    out, rest = take_opt!(rest, "--out", nothing)
+    timeout, rest = take_opt!(rest, "--timeout", "900")
+    limit, rest = take_opt!(rest, "--limit", "0")
+    keep, rest = take_flag!(rest, "--keep-worktrees")
+    out === nothing && usage_error("validate: --out is required")
+    length(rest) == 1 || usage_error("validate: expected exactly one <candidates.jsonl>")
+    candidates = rest[1]
+
+    validate(candidates, out;
+             julia=global_opts.julia, work=global_opts.work,
+             timeout=parse(Int, timeout), keep_worktrees=keep, limit=parse(Int, limit))
+end
+
+function cmd_eval(global_opts, rest::Vector{String})
+    out, rest = take_opt!(rest, "--out", nothing)
+    timeout, rest = take_opt!(rest, "--timeout", "900")
+    keep, rest = take_flag!(rest, "--keep-worktrees")
+    out === nothing && usage_error("eval: --out is required")
+    length(rest) == 2 || usage_error("eval: expected <instances.jsonl> <predictions.jsonl>")
+    instances, predictions = rest[1], rest[2]
+
+    backend = ColdBackend(global_opts.julia; timeout=parse(Int, timeout))
+    evaluate(instances, predictions, out;
+             backend=backend, julia=global_opts.julia, work=global_opts.work,
+             timeout=parse(Int, timeout), keep_worktrees=keep)
+end
+
+function cmd_run_one(global_opts, rest::Vector{String})
+    timeout, rest = take_opt!(rest, "--timeout", "900")
+    model_patch, rest = take_opt!(rest, "--model-patch", nothing)
+    gold, rest = take_flag!(rest, "--gold")
+    length(rest) == 2 || usage_error("run-one: expected <instances.jsonl> <instance_id>")
+    instances, instance_id = rest[1], rest[2]
+
+    backend = ColdBackend(global_opts.julia; timeout=parse(Int, timeout))
+    try
+        run_one(instances, instance_id;
+                gold=gold, model_patch=model_patch, backend=backend,
+                julia=global_opts.julia, work=global_opts.work, timeout=parse(Int, timeout))
+    catch e
+        e isa RunOneError ? exit(e.code) : rethrow()
+    end
+end
+
+function cmd_self_test(_global_opts, _rest::Vector{String})
+    self_test() || exit(1)
+end
+
+function cmd_export_official(_global_opts, rest::Vector{String})
+    out, rest = take_opt!(rest, "--out", nothing)
+    out === nothing && usage_error("export-official: --out is required")
+    length(rest) == 1 || usage_error("export-official: expected exactly one <instances.jsonl>")
+    instances = rest[1]
+    n = export_official(instances, out)
+    println(stdout, "[export-official] wrote $(n) records to $(out)")
+end
+
+# Dispatch table: register new subcommands here without touching the parser core.
+const DISPATCH = Dict{String,Function}(
+    "validate"        => cmd_validate,
+    "eval"            => cmd_eval,
+    "run-one"         => cmd_run_one,
+    "--self-test"     => cmd_self_test,
+    "export-official" => cmd_export_official,
+)
+
+function main(argv::Vector{String})
+    # `--self-test` anywhere short-circuits, mirroring Python's `if "--self-test" in sys.argv`.
+    if "--self-test" in argv
+        cmd_self_test((; julia=DEFAULT_JULIA, work=DEFAULT_WORK), String[])
+        return
+    end
+
+    args = copy(argv)
+    julia, args = take_opt!(args, "--julia", DEFAULT_JULIA)
+    work, args = take_opt!(args, "--work", DEFAULT_WORK)
+    global_opts = (; julia=julia, work=work)
+
+    if isempty(args)
+        println(USAGE)
+        exit(0)
+    end
+
+    sub = popfirst!(args)
+    fn = get(DISPATCH, sub, nothing)
+    if fn === nothing
+        println(stderr, "unknown subcommand: $(sub)")
+        println(USAGE)
+        exit(1)
+    end
+    fn(global_opts, args)
+end
+
+main(copy(ARGS))

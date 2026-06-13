@@ -1,0 +1,23 @@
+# Python / Julia build artifacts
+__pycache__/
+*.pyc
+.CondaPkg/
+
+# UNIX sockets and pid files from the resident servers
+*.sock
+*.sock.pid
+
+# Transient work/ contents: clones, worktrees, built envs, episode workspaces.
+# Everything under work/ is regenerable except the provenance artifacts kept below.
+work/repos/
+work/wt/
+work/envs/
+work/warm/
+work/eval/
+work/logs/*/
+work/*.log
+
+# Keep provenance: mined candidates and the validate summary.
+!work/*.candidates.jsonl
+!work/logs/
+!work/logs/validate_summary.jsonl
