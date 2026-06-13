@@ -115,6 +115,7 @@ re-mine instances from scratch (`collect/mine_repo.py`).
 - [docs/schema.md](docs/schema.md) — instance schema, prediction schema, F2P/P2P semantics, `@testset`-path convention
 - [docs/dataset_card.md](docs/dataset_card.md) — dataset card, mining protocol, limitations
 - [docs/comparison_to_swebench.md](docs/comparison_to_swebench.md) — what is the same / different vs the official SWE-bench
+- [docs/baselines.md](docs/baselines.md) — baseline agent resolve-rates (Sonnet / Haiku / Codex)
 - [NOTICES.md](NOTICES.md) — third-party data provenance and upstream licenses
 - [LICENSE](LICENSE) — MIT license for the harness code
 
