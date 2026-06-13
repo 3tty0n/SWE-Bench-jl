@@ -1,133 +1,273 @@
 # SWE-bench-jl
 
-SWE-bench-jl is, to our knowledge, the first curated, execution-validated, Julia-specific
-SWE-bench-style benchmark. It packages 45 real GitHub bug-fix tasks from five established
-Julia packages with a SWE-bench-compatible instance schema and a pure-Julia evaluation
-harness that decides *resolved* by actually running each package's test suite before and
-after a candidate patch — no Docker, no Python runtime needed at evaluation time.
+**SWE-bench-jl** is, to our knowledge, the first **curated, execution-validated, Julia-specific SWE-bench-style benchmark with a pure-Julia evaluation harness**.
 
-## Why SWE-bench-jl
+It packages **45 real GitHub bug-fix tasks** from **five established Julia packages** using a SWE-bench-compatible instance schema. A candidate patch is judged by actually running the target package's Julia test suite before and after the patch. Evaluation requires Julia and git, but **does not require Docker or a Python runtime**.
 
-SWE-bench and its successors cover Python and a handful of other languages, but as of
-mid-2026 none of them include Julia. Julia's testing model is also different enough that a
-mechanical port is not feasible: there are no pytest-style node IDs, the de-facto suite
-entry point is `test/runtests.jl`, and environments are resolved through
-`Project.toml`/`Manifest.toml` rather than pip/conda. SWE-bench-jl adapts the SWE-bench
-contract to these realities — replacing pytest node-IDs with `@testset`-path identifiers,
-using `Pkg.instantiate` for hermetic per-instance environments, and pinning
-`julia_version` per instance — so that the resolved criterion, the F2P/P2P split, and the
-validation protocol carry over faithfully.
+## Why SWE-bench-jl?
+
+SWE-bench-style benchmarks evaluate whether language models and coding agents can resolve real repository-level software problems. Existing benchmarks now cover a growing number of languages, and broad multilingual datasets such as SWE-rebench-V2 include Julia instances. However, Julia needs more than a mechanical port of a Python- or Docker-centered benchmark.
+
+Julia packages commonly use:
+
+* `Project.toml` / `Manifest.toml` for environment resolution,
+* `test/runtests.jl` as the standard test-suite entry point,
+* `@testset` rather than pytest-style node IDs,
+* package-local dependency resolution through `Pkg`,
+* and Julia-specific assumptions about load paths, precompilation, and test execution.
+
+SWE-bench-jl adapts the SWE-bench contract to these realities. It replaces pytest-style node IDs with `@testset`-path identifiers, uses `Pkg.instantiate()` for per-instance environments, records `julia_version` per instance, and validates each instance through actual Julia test execution.
 
 ## Dataset card
 
-45 execution-validated instances mined from 5 pure-Julia packages.
+SWE-bench-jl currently contains **45 execution-validated instances** mined from **5 pure-Julia packages**.
 
-| repo | instances |
-|---|---|
-| JuliaCollections/DataStructures.jl | 19 |
-| JuliaCollections/OrderedCollections.jl | 9 |
-| JuliaMath/Combinatorics.jl | 8 |
-| JuliaCollections/IterTools.jl | 5 |
-| JuliaIO/JSON.jl | 4 |
-| **total** | **45** |
+| Repository                               | Instances |
+| ---------------------------------------- | --------: |
+| `JuliaCollections/DataStructures.jl`     |        19 |
+| `JuliaCollections/OrderedCollections.jl` |         9 |
+| `JuliaMath/Combinatorics.jl`             |         8 |
+| `JuliaCollections/IterTools.jl`          |         5 |
+| `JuliaIO/JSON.jl`                        |         4 |
+| **Total**                                |    **45** |
 
-The validated dataset is in `data/instances.jsonl` (one JSON object per line).
-See [docs/dataset_card.md](docs/dataset_card.md) for the full dataset card and mining
-protocol, and [docs/schema.md](docs/schema.md) for the instance and prediction schemas.
+The validated dataset is stored in:
+
+```text
+data/instances.jsonl
+```
+
+Each line is one JSON object representing a single benchmark instance.
+
+See also:
+
+* [`docs/dataset_card.md`](docs/dataset_card.md) — dataset card, mining protocol, validation protocol, and limitations
+* [`docs/schema.md`](docs/schema.md) — instance schema, prediction schema, F2P/P2P semantics, and `@testset`-path convention
+* [`docs/comparison_to_swebench.md`](docs/comparison_to_swebench.md) — comparison with the original SWE-bench design
+* [`NOTICES.md`](NOTICES.md) — third-party data provenance and upstream licenses
+
+## Relationship to SWE-bench
+
+SWE-bench-jl follows the core SWE-bench idea: a task is resolved only if a model-generated patch makes previously failing tests pass while preserving previously passing tests.
+
+A prediction is considered resolved if and only if, at:
+
+```text
+base_commit + test_patch + model_patch
+```
+
+both conditions hold:
+
+1. every `FAIL_TO_PASS` testset path passes, and
+2. every `PASS_TO_PASS` testset path still passes.
+
+The `FAIL_TO_PASS` and `PASS_TO_PASS` sets are recorded from real validation runs. They are not inferred from the diff alone.
+
+SWE-bench-jl differs from the original SWE-bench mainly in its Julia-specific execution model:
+
+| Aspect             | SWE-bench                   | SWE-bench-jl                |
+| ------------------ | --------------------------- | --------------------------- |
+| Primary ecosystem  | Python                      | Julia                       |
+| Test identifiers   | pytest node IDs             | `@testset`-path identifiers |
+| Environment setup  | Docker-based images         | Julia `Pkg` environments    |
+| Evaluation runtime | Python/Docker-based harness | pure-Julia harness          |
+| Dataset scale      | large benchmark family      | 45-instance v0 seed         |
+| Validation         | execution-based             | execution-based             |
+
+SWE-bench-jl is therefore not intended to replace SWE-bench. It is a Julia-native adaptation of the same evaluation philosophy.
+
+## Relationship to other Julia and multilingual benchmarks
+
+SWE-bench-jl is related to, but distinct from, several existing benchmarks.
+
+### SWE-bench Multilingual
+
+[SWE-bench Multilingual](https://www.swebench.com/multilingual-leaderboard.html) extends SWE-bench to multiple programming languages. At the time of writing, it covers C, C++, Go, Java, JavaScript/TypeScript, PHP, Ruby, and Rust, but not Julia.
+
+SWE-bench-jl complements SWE-bench Multilingual by targeting Julia specifically.
+
+### SWE-rebench-V2
+
+[SWE-rebench-V2](https://huggingface.co/datasets/nebius/SWE-rebench-V2) is a broad multilingual SWE-bench-style dataset that includes Julia among many other languages.
+
+SWE-bench-jl differs in scope and design. Rather than aiming for broad multilingual coverage, it provides a curated Julia-specific benchmark with a Julia-native execution harness, Julia package environment handling, and Julia testset-path based validation.
+
+### JuliaBench
+
+[JuliaBench](https://github.com/JuliaBench/JuliaBench) provides benchmark collections for evaluating LLMs on Julia software-engineering tasks. It is especially oriented toward benchmark creation and agent training/evaluation within the Julia ecosystem.
+
+SWE-bench-jl is complementary: it focuses specifically on real GitHub bug-fix tasks, SWE-bench-compatible instance records, and execution-validated F2P/P2P resolution.
+
+### Julia-LLM-Leaderboard
+
+[Julia-LLM-Leaderboard](https://github.com/svilupp/Julia-LLM-Leaderboard) evaluates LLMs on Julia code-generation tasks. It is useful for measuring Julia coding ability, but it is not a repository-level issue-resolution benchmark.
+
+SWE-bench-jl instead targets repository-level patch generation and regression-aware validation.
 
 ## Install
 
-```sh
+Clone the repository and instantiate the Julia environment:
+
+```bash
+git clone https://github.com/3tty0n/SWE-Bench-jl.git
+cd SWE-Bench-jl
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
-Requires **Julia >= 1.12** and **git** on `PATH`. Python is needed only to re-mine
-instances, not to evaluate predictions.
+Requirements:
+
+* Julia `>= 1.12`
+* `git` on `PATH`
+
+Python is needed only to re-mine instances from scratch. It is not needed to evaluate predictions.
 
 ## Quickstart
 
-**Run the in-process self-test** (no network or Julia subprocess needed):
+Run the in-process self-test:
 
-```sh
+```bash
 bin/swebenchjl --self-test
 ```
 
-**Evaluate one instance with the gold patch** (needs network for the first clone):
+Evaluate one instance with the gold patch:
 
-```sh
+```bash
 bin/swebenchjl run-one data/instances.jsonl JuliaCollections__IterTools-103 --gold
 ```
 
-**Evaluate a predictions file:**
+Evaluate a predictions file:
 
-```sh
+```bash
 bin/swebenchjl eval data/instances.jsonl predictions.jsonl --out report.json
 ```
 
-**Export to canonical SWE-bench JSONL** (remaps Julia-specific fields to the upstream
-SWE-bench schema):
+Export to canonical SWE-bench-style JSONL:
 
-```sh
+```bash
 bin/swebenchjl export-official data/instances.jsonl --out official.jsonl
 ```
 
 ## Prediction format
 
-Each line of a predictions file is a JSON object with two fields:
+A predictions file is a JSONL file. Each line must contain one prediction:
 
 ```json
 {"instance_id": "JuliaCollections__DataStructures-966", "model_patch": "<unified diff>"}
 ```
 
+The `model_patch` field should contain a unified diff that can be applied to the target repository at the instance's base commit.
+
+## Instance format
+
+Each instance records the information needed to reproduce the task and evaluate a candidate patch, including:
+
+* `instance_id`
+* `repo`
+* `base_commit`
+* `problem_statement`
+* `patch`
+* `test_patch`
+* `FAIL_TO_PASS`
+* `PASS_TO_PASS`
+* Julia-specific environment metadata
+
+See [`docs/schema.md`](docs/schema.md) for the complete schema.
+
 ## Resolved criterion
 
-A prediction is **resolved** if and only if, at `base_commit + test_patch + model_patch`:
+A prediction is resolved if the candidate patch satisfies the benchmark's F2P/P2P contract.
 
-- every `FAIL_TO_PASS` testset path passes, **and**
-- every `PASS_TO_PASS` testset path still passes (no regression).
+At evaluation time, SWE-bench-jl checks:
 
-Both sets are recorded from two real test runs during validation — never inferred from
-the diff. See [docs/schema.md](docs/schema.md) for the `@testset`-path node-id convention.
+```text
+base_commit + test_patch + model_patch
+```
 
-## Relationship to SWE-bench
+The result is considered resolved only when:
 
-SWE-bench-jl follows the **same validation methodology and resolved contract** as the official
-[SWE-bench](https://www.swebench.com), adapted to Julia: identical execution-based validation
-(base-fails / gold-passes), identical `FAIL_TO_PASS` ∧ `PASS_TO_PASS` resolved criterion, and
-src/test patch separation. Measured on the 2-per-repo subset, **gold patches resolve 100%** and
-**empty patches resolve 0%** — the `FAIL_TO_PASS` tests genuinely require the fix. It differs in
-environment (`Project.toml`/`Manifest.toml` instead of Docker), problem-statement provenance
-(partly PR-sourced — filter to `statement_source == "issue"` for strict, non-leaky evaluation),
-and scale (a 45-instance v0 seed, **not** human-Verified). Full comparison:
-[docs/comparison_to_swebench.md](docs/comparison_to_swebench.md).
+* all `FAIL_TO_PASS` testset paths pass, and
+* all `PASS_TO_PASS` testset paths still pass.
+
+This guards against patches that only fix the target failing behavior while breaking existing behavior.
+
+## Problem-statement provenance
+
+Some instances may use PR-derived problem statements. For stricter non-leaky evaluation, filter to instances whose statement source is issue-derived.
+
+The relevant metadata is recorded in the dataset. See [`docs/dataset_card.md`](docs/dataset_card.md) for details.
+
+## Re-mining instances
+
+The validated dataset is already included in `data/instances.jsonl`.
+
+To re-mine instances from scratch, use the scripts under:
+
+```text
+collect/
+```
+
+Python 3.10+ is required only for this mining workflow.
+
+Evaluation of existing predictions does not require Python.
 
 ## Evaluation requirements
 
-Running `eval` or `run-one` needs:
-- Julia >= 1.12 (set `JULIA_BIN` or rely on `julia` on `PATH`)
-- `git` (for worktrees and `git apply`)
+Running `eval` or `run-one` requires:
 
-Python is **not** needed to evaluate predictions. Python 3.10+ is needed only to
-re-mine instances from scratch (`collect/mine_repo.py`).
+* Julia `>= 1.12`
+* `git`
+* network access for the first clone of each target repository
+* enough disk space for temporary worktrees and package environments
 
-## Documentation
+Set `JULIA_BIN` if you want to use a specific Julia executable:
 
-- [docs/schema.md](docs/schema.md) — instance schema, prediction schema, F2P/P2P semantics, `@testset`-path convention
-- [docs/dataset_card.md](docs/dataset_card.md) — dataset card, mining protocol, limitations
-- [docs/comparison_to_swebench.md](docs/comparison_to_swebench.md) — what is the same / different vs the official SWE-bench
-- [docs/baselines.md](docs/baselines.md) — baseline agent resolve-rates (Sonnet / Haiku / Codex)
-- [NOTICES.md](NOTICES.md) — third-party data provenance and upstream licenses
-- [LICENSE](LICENSE) — MIT license for the harness code
+```bash
+JULIA_BIN=/path/to/julia bin/swebenchjl eval data/instances.jsonl predictions.jsonl --out report.json
+```
+
+## Limitations
+
+SWE-bench-jl is an initial v0 seed benchmark. Important limitations include:
+
+* small scale: 45 instances from 5 repositories,
+* focus on pure-Julia packages,
+* no human-verified subset yet,
+* possible leakage for PR-derived problem statements,
+* dependency on package availability and Julia version compatibility,
+* and incomplete coverage of the wider Julia package ecosystem.
+
+The goal of this release is to provide a transparent, executable, Julia-native starting point for repository-level coding-agent evaluation.
+
+## Recommended use
+
+SWE-bench-jl is suitable for:
+
+* evaluating coding agents on Julia repository-level bug fixing,
+* testing Julia-aware patch generation systems,
+* comparing model behavior on Julia against Python-centric SWE-bench results,
+* studying how language-specific package managers and test frameworks affect SWE-style evaluation,
+* and developing Julia-native evaluation harnesses for coding agents.
+
+For strict evaluation, prefer issue-derived instances when available and report the exact instance subset used.
 
 ## Citation
+
+If you use SWE-bench-jl in research, please cite:
 
 ```bibtex
 @software{swebench_jl_2026,
   author    = {Yusuke Izawa},
   title     = {{SWE-bench-jl}: An Execution-Validated Julia SWE-bench-Style Benchmark},
   year      = {2026},
-  url       = {https://github.com/3tty0n/SWE-bench-jl}
+  url       = {https://github.com/3tty0n/SWE-Bench-jl}
 }
 ```
 
-See also [CITATION.cff](CITATION.cff) for machine-readable citation metadata.
+See also [`CITATION.cff`](CITATION.cff) for machine-readable citation metadata.
+
+## License
+
+The SWE-bench-jl harness code is released under the MIT License. See [`LICENSE`](LICENSE).
+
+Benchmark instances are derived from upstream open-source repositories. See [`NOTICES.md`](NOTICES.md) for provenance and third-party license information.
+
