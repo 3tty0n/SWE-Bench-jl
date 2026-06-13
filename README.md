@@ -89,6 +89,18 @@ A prediction is **resolved** if and only if, at `base_commit + test_patch + mode
 Both sets are recorded from two real test runs during validation — never inferred from
 the diff. See [docs/schema.md](docs/schema.md) for the `@testset`-path node-id convention.
 
+## Relationship to SWE-bench
+
+SWE-bench-jl follows the **same validation methodology and resolved contract** as the official
+[SWE-bench](https://www.swebench.com), adapted to Julia: identical execution-based validation
+(base-fails / gold-passes), identical `FAIL_TO_PASS` ∧ `PASS_TO_PASS` resolved criterion, and
+src/test patch separation. Measured on the 2-per-repo subset, **gold patches resolve 100%** and
+**empty patches resolve 0%** — the `FAIL_TO_PASS` tests genuinely require the fix. It differs in
+environment (`Project.toml`/`Manifest.toml` instead of Docker), problem-statement provenance
+(partly PR-sourced — filter to `statement_source == "issue"` for strict, non-leaky evaluation),
+and scale (a 45-instance v0 seed, **not** human-Verified). Full comparison:
+[docs/comparison_to_swebench.md](docs/comparison_to_swebench.md).
+
 ## Evaluation requirements
 
 Running `eval` or `run-one` needs:
@@ -102,6 +114,7 @@ re-mine instances from scratch (`collect/mine_repo.py`).
 
 - [docs/schema.md](docs/schema.md) — instance schema, prediction schema, F2P/P2P semantics, `@testset`-path convention
 - [docs/dataset_card.md](docs/dataset_card.md) — dataset card, mining protocol, limitations
+- [docs/comparison_to_swebench.md](docs/comparison_to_swebench.md) — what is the same / different vs the official SWE-bench
 - [NOTICES.md](NOTICES.md) — third-party data provenance and upstream licenses
 - [LICENSE](LICENSE) — MIT license for the harness code
 

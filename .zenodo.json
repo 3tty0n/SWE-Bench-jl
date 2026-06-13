@@ -1,0 +1,20 @@
+{
+  "title": "SWE-bench-jl: an execution-validated Julia SWE-bench-style benchmark",
+  "upload_type": "dataset",
+  "description": "SWE-bench-jl is, to our knowledge, the first curated, execution-validated, Julia-specific SWE-bench-style benchmark: 45 real GitHub bug-fix tasks from established Julia packages, packaged with a SWE-bench-compatible instance schema and a pure-Julia evaluation harness that decides 'resolved' by running each package's test suite before and after a candidate patch (FAIL_TO_PASS must flip and PASS_TO_PASS must hold). It matches the validation methodology of the base SWE-bench, adapted to Julia (Test.jl @testset paths instead of pytest node-ids; Project.toml/Manifest.toml environments instead of Docker). See docs/comparison_to_swebench.md for an explicit comparison to the official SWE-bench.",
+  "creators": [
+    { "name": "Izawa, Yusuke" }
+  ],
+  "license": "MIT",
+  "access_right": "open",
+  "keywords": [
+    "SWE-bench",
+    "Julia",
+    "benchmark",
+    "program repair",
+    "code generation",
+    "coding agents",
+    "software engineering"
+  ],
+  "version": "0.1.0"
+}
