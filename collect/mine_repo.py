@@ -135,6 +135,31 @@ def is_fix_commit(subject, body):
     return bool(_FIX_RE.search(text))
 
 
+# Subjects/bodies that signal a feature or new-API addition rather than a bug fix. These
+# tasks ("implement X", "add method Y") are well-cued by the failing-test name and tend to
+# be easy for agents; difficulty mining excludes them.
+_FEAT_RE = re.compile(
+    r"\b(feat|implement(s|ed)?|introduc(e|es|ed)|add(s|ed)?\s+(support|methods?|functions?|api|new))\b"
+    r"|\bnew\s+(function|method|feature|api)\b",
+    re.IGNORECASE,
+)
+
+
+def is_feature_commit(subject, body):
+    return bool(_FEAT_RE.search(subject + "\n" + body))
+
+
+def patch_modifies_existing(patch):
+    """True if the src patch removes/changes existing lines (real `-` lines, not the `---`
+    file header), i.e. it edits existing logic rather than purely adding new code. A robust
+    difficulty signal: subtle bug fixes touch existing code; "add function X" tasks are
+    addition-only and tend to be well-cued/easy."""
+    for line in patch.splitlines():
+        if line.startswith("-") and not line.startswith("---"):
+            return True
+    return False
+
+
 # ── PR / issue number extraction ──────────────────────────────────────────────
 
 _SQUASH_PR_RE = re.compile(r"\(#(\d+)\)\s*$")
@@ -238,11 +263,22 @@ def parse_args():
     p.add_argument("--no-gh", action="store_true")
     p.add_argument("--max-src-files", type=int, default=8)
     p.add_argument("--max-src-lines", type=int, default=500)
+    # Difficulty mining (v0.2): bias toward harder, less-cued, discriminating instances.
+    p.add_argument("--hard", action="store_true",
+                   help="difficulty mode: --require-issue + --exclude-feat + --modifies-existing")
+    p.add_argument("--require-issue", action="store_true",
+                   help="only accept commits whose problem statement comes from a linked issue (symptom-described, least leaky)")
+    p.add_argument("--exclude-feat", action="store_true",
+                   help="skip feature/new-API commits; keep genuine bug fixes")
+    p.add_argument("--modifies-existing", action="store_true",
+                   help="require the src patch to edit existing code (have real deletion lines)")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.hard:
+        args.require_issue = args.exclude_feat = args.modifies_existing = True
 
     repo_dir = os.path.abspath(args.repo_dir)
     slug = args.repo_slug
@@ -280,6 +316,9 @@ def main():
             if not is_fix_commit(info["subject"], info["body"]):
                 continue
 
+            if args.exclude_feat and is_feature_commit(info["subject"], info["body"]):
+                continue
+
             try:
                 entries = name_status(repo_dir, parent, sha)
             except RuntimeError:
@@ -305,12 +344,18 @@ def main():
             if not patch or not test_patch:
                 continue
 
+            if args.modifies_existing and not patch_modifies_existing(patch):
+                continue
+
             pr_num = extract_pr_number(info["subject"], info["body"])
             sha8 = sha[:8]
 
             problem_statement, stmt_source, issue_url = fetch_problem_statement(
                 slug, pr_num, info["subject"], info["body"], use_gh
             )
+
+            if args.require_issue and stmt_source != "issue":
+                continue
 
             instance_id = make_instance_id(slug, pr_num, sha8)
 
