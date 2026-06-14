@@ -22,6 +22,8 @@ Examples
 """
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -31,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -67,6 +70,57 @@ def diff_reports(pre: dict, post: dict) -> tuple[list, list, list]:
                 f2p.append(path)
         elif pre_status == "pass":
             if post_status == "pass":
+                p2p.append(path)
+            else:
+                new_fail.append(path)
+    return f2p, p2p, new_fail
+
+
+def stable_status(reports: list) -> dict:
+    """Collapse K repeated run reports into one status per test path.
+
+    A path is `pass`/`fail` only if it has that status in *every* run; any
+    disagreement (including being missing from some runs) marks it `flaky`.
+    With a single run this is just that run's status (no path is ever flaky),
+    so K=1 reproduces the non-flaky pipeline exactly.
+    """
+    paths = set()
+    indexed = []
+    for r in reports:
+        idx = {t["path"]: t["status"] for t in r.get("tests", [])}
+        indexed.append(idx)
+        paths.update(idx.keys())
+
+    out = {}
+    for path in paths:
+        statuses = {idx.get(path, "missing") for idx in indexed}
+        if statuses == {"pass"}:
+            out[path] = "pass"
+        elif statuses == {"fail"}:
+            out[path] = "fail"
+        else:
+            out[path] = "flaky"
+    return out
+
+
+def diff_reports_stable(pre_reports: list, post_reports: list) -> tuple[list, list, list]:
+    """Flaky-aware (F2P, P2P, NEW_FAIL): paths flaky in pre OR post are excluded
+    from all three sets (scaling plan G4). Reduces to diff_reports when K=1."""
+    pre_idx = stable_status(pre_reports)
+    post_idx = stable_status(post_reports)
+
+    f2p, p2p, new_fail = [], [], []
+    for path, pre_s in pre_idx.items():
+        if pre_s == "flaky":
+            continue
+        post_s = post_idx.get(path, "missing")
+        if post_s == "flaky":
+            continue
+        if pre_s == "fail":
+            if post_s == "pass":
+                f2p.append(path)
+        elif pre_s == "pass":
+            if post_s == "pass":
                 p2p.append(path)
             else:
                 new_fail.append(path)
@@ -146,6 +200,24 @@ def log_dir(work: pathlib.Path, instance_id: str) -> pathlib.Path:
     d = work / "logs" / instance_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+@contextlib.contextmanager
+def repo_flock(work: pathlib.Path, repo: str):
+    """Serialize clone/fetch/worktree mutations on one repo's shared clone across
+    parallel validator processes (the test runs themselves stay unlocked, since
+    each instance has its own worktree + env). A no-op bottleneck when --jobs=1."""
+    safe = repo.replace("/", "__")
+    lock_root = work / "repos"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_root / f".{safe}.lock"
+    fh = open(lock_path, "w")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
 
 
 def ensure_clone(repo_url: str, clone: pathlib.Path, commits: list, log: pathlib.Path):
@@ -267,20 +339,49 @@ def run_tests(julia: str, env: pathlib.Path, wt: pathlib.Path,
         return None, elapsed_ms
 
 
+def run_tests_k(julia: str, env: pathlib.Path, wt: pathlib.Path,
+                out_json: pathlib.Path, timeout: int, log: pathlib.Path,
+                label: str, k: int) -> tuple[list, float]:
+    """Run the suite K times; return (list-of-reports, total_elapsed_ms).
+
+    A run that produces no parseable report contributes None (caller decides how
+    strict to be). Each repeat writes a distinct JSON so nothing is clobbered.
+    """
+    reports = []
+    total_ms = 0.0
+    for i in range(k):
+        oj = out_json if k == 1 else out_json.with_name(f"{out_json.stem}_{i}{out_json.suffix}")
+        lbl = label if k == 1 else f"{label}{i}"
+        report, ms = run_tests(julia, env, wt, oj, timeout, log, lbl)
+        total_ms += ms
+        reports.append(report)
+    return reports, total_ms
+
+
 # ---------------------------------------------------------------------------
 # validate subcommand
 # ---------------------------------------------------------------------------
 
 
 def cmd_validate(args):
-    work = pathlib.Path(args.work)
+    # Resolve to absolute: `git -C <clone> worktree add <path>` resolves a relative
+    # <path> against the clone dir, not the caller's cwd, which silently nests the
+    # worktree inside the clone and breaks later `git -C <path>` calls.
+    work = pathlib.Path(args.work).resolve()
     julia = args.julia
     timeout = args.timeout
+    flaky_runs = max(1, getattr(args, "flaky_runs", 1))
+    gc_env = getattr(args, "gc_env", False)
+    jobs = max(1, getattr(args, "jobs", 1))
+    resume = getattr(args, "resume", False)
+
     out_path = pathlib.Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    summary_log = work / "logs" / "validate_summary.jsonl"
-    summary_log.parent.mkdir(parents=True, exist_ok=True)
+    logs_root = work / "logs"
+    logs_root.mkdir(parents=True, exist_ok=True)
+    summary_log = logs_root / "validate_summary.jsonl"
+    validated_cache = logs_root / "validated.jsonl"  # durable enriched valids (resume artifact)
 
     jver = julia_version(julia)
 
@@ -290,39 +391,103 @@ def cmd_validate(args):
             line = line.strip()
             if line:
                 candidates.append(json.loads(line))
-
     if args.limit:
         candidates = candidates[: args.limit]
 
-    counts = {"valid": 0, "total": 0}
-    verdicts = {}
+    # resume: skip instances already recorded in the summary
+    done = {}
+    if resume and summary_log.exists():
+        for line in open(summary_log):
+            line = line.strip()
+            if line:
+                rec = json.loads(line)
+                done[rec["instance_id"]] = rec["verdict"]
+    todo = [c for c in candidates if c["instance_id"] not in done]
+    if resume:
+        print(f"[validate] resume: {len(candidates) - len(todo)} already done, "
+              f"{len(todo)} to run (jobs={jobs}, flaky={flaky_runs})", file=sys.stderr)
 
-    with open(out_path, "w") as out_fh:
-        for inst in candidates:
-            iid = inst["instance_id"]
-            counts["total"] += 1
-            verdict, n_f2p, n_p2p, pre_ms, post_ms = _validate_one(
-                inst, work, julia, timeout, args.keep_worktrees, jver
-            )
-            verdicts[iid] = verdict
-            if verdict == "valid":
-                counts["valid"] += 1
-                out_fh.write(json.dumps(inst) + "\n")
-            print(f"[validate] {iid}: {verdict} f2p={n_f2p} p2p={n_p2p}", file=sys.stderr)
-            with open(summary_log, "a") as sl:
-                sl.write(json.dumps({
-                    "instance_id": iid, "verdict": verdict,
-                    "n_f2p": n_f2p, "n_p2p": n_p2p,
-                    "pre_ms": pre_ms, "post_ms": post_ms,
-                }) + "\n")
+    opts = {"work": str(work), "julia": julia, "timeout": timeout,
+            "keep_wt": args.keep_worktrees, "jver": jver,
+            "flaky_runs": flaky_runs, "gc_env": gc_env}
 
-    total = counts["total"]
-    valid = counts["valid"]
-    print(f"\n[validate] done: {valid}/{total} valid", file=sys.stderr)
+    valid_now = {iid for iid, v in done.items() if v == "valid"}
+
+    def record(res):
+        iid, verdict, n_f2p, n_p2p, pre_ms, post_ms, inst = res
+        with open(summary_log, "a") as sl:
+            sl.write(json.dumps({
+                "instance_id": iid, "verdict": verdict,
+                "n_f2p": n_f2p, "n_p2p": n_p2p,
+                "pre_ms": pre_ms, "post_ms": post_ms,
+            }) + "\n")
+        if verdict == "valid" and inst is not None:
+            valid_now.add(iid)
+            with open(validated_cache, "a") as vc:
+                vc.write(json.dumps(inst) + "\n")
+        else:
+            valid_now.discard(iid)  # a re-run that regressed must not stay "valid"
+        print(f"[validate] {iid}: {verdict} f2p={n_f2p} p2p={n_p2p}", file=sys.stderr)
+
+    if jobs > 1 and len(todo) > 1:
+        with ProcessPoolExecutor(max_workers=jobs) as ex:
+            futs = {ex.submit(_validate_worker, c, opts): c["instance_id"] for c in todo}
+            for fut in as_completed(futs):
+                try:
+                    record(fut.result())
+                except Exception as exc:
+                    iid = futs[fut]
+                    print(f"[validate] {iid}: worker crashed: {exc}", file=sys.stderr)
+                    record((iid, "error", 0, 0, 0.0, 0.0, None))
+    else:
+        for c in todo:
+            record(_validate_worker(c, opts))
+
+    # assemble out: the latest enriched record for every currently-valid candidate,
+    # in candidate order, deduped (last write wins).
+    emit_order = [c["instance_id"] for c in candidates if c["instance_id"] in valid_now]
+    n = _assemble_out(validated_cache, emit_order, out_path)
+    print(f"\n[validate] done: {n} valid instances -> {out_path}", file=sys.stderr)
+
+
+def _validate_worker(inst: dict, opts: dict) -> tuple:
+    """Top-level (picklable) entry point for the process pool. Returns a tuple
+    carrying the enriched instance so the parent can assemble the output even
+    when validation ran in a separate process."""
+    work = pathlib.Path(opts["work"])
+    verdict, n_f2p, n_p2p, pre_ms, post_ms, enriched = _validate_one(
+        inst, work, opts["julia"], opts["timeout"], opts["keep_wt"], opts["jver"],
+        flaky_runs=opts["flaky_runs"], gc_env=opts["gc_env"],
+    )
+    return (inst["instance_id"], verdict, n_f2p, n_p2p, pre_ms, post_ms, enriched)
+
+
+def _assemble_out(cache_path: pathlib.Path, emit_order: list, out_path: pathlib.Path) -> int:
+    latest = {}
+    if cache_path.exists():
+        for line in open(cache_path):
+            line = line.strip()
+            if line:
+                rec = json.loads(line)
+                latest[rec["instance_id"]] = rec
+    n, missing = 0, []
+    with open(out_path, "w") as fh:
+        for iid in emit_order:
+            rec = latest.get(iid)
+            if rec is None:
+                missing.append(iid)
+                continue
+            fh.write(json.dumps(rec) + "\n")
+            n += 1
+    if missing:
+        print(f"[validate] WARN: {len(missing)} valid ids missing from "
+              f"{cache_path.name} (deleted?): {missing[:5]}", file=sys.stderr)
+    return n
 
 
 def _validate_one(inst: dict, work: pathlib.Path, julia: str, timeout: int,
-                  keep_wt: bool, jver: str) -> tuple[str, int, int, float, float]:
+                  keep_wt: bool, jver: str, *, flaky_runs: int = 1,
+                  gc_env: bool = False) -> tuple[str, int, int, float, float, dict | None]:
     iid = inst["instance_id"]
     repo = inst["repo"]
     repo_url = inst["repo_url"]
@@ -339,73 +504,88 @@ def _validate_one(inst: dict, work: pathlib.Path, julia: str, timeout: int,
     n_f2p = n_p2p = 0
     pre_ms = post_ms = 0.0
 
+    # clone/fetch + worktree creation mutate the shared per-repo clone: serialize
+    # them across parallel workers. The build/test phase below runs lock-free.
     try:
-        ensure_clone(repo_url, clone, [base_sha, fix_sha], logs)
+        with repo_flock(work, repo):
+            ensure_clone(repo_url, clone, [base_sha, fix_sha], logs)
     except Exception as exc:
         _log_err(logs, "clone_error.log", str(exc))
-        return "clone_failed", n_f2p, n_p2p, pre_ms, post_ms
+        return "clone_failed", n_f2p, n_p2p, pre_ms, post_ms, None
 
-    if not create_worktree(clone, wt, base_sha, logs):
-        return "worktree_failed", n_f2p, n_p2p, pre_ms, post_ms
+    with repo_flock(work, repo):
+        wt_ok = create_worktree(clone, wt, base_sha, logs)
+    if not wt_ok:
+        return "worktree_failed", n_f2p, n_p2p, pre_ms, post_ms, None
+
+    def finish(verdict, inst_out=None):
+        if not keep_wt:
+            with repo_flock(work, repo):
+                remove_worktree(clone, wt, logs)
+        if gc_env:
+            _cleanup_env(env, logs)
+        return verdict, n_f2p, n_p2p, pre_ms, post_ms, inst_out
 
     try:
         if test_patch and not apply_patch(test_patch, wt, logs, "test_patch"):
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "test_patch_failed", n_f2p, n_p2p, pre_ms, post_ms
+            return finish("test_patch_failed")
 
         env.mkdir(parents=True, exist_ok=True)
         if not build_env(julia, wt, env, timeout, logs):
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "env_failed", n_f2p, n_p2p, pre_ms, post_ms
+            return finish("env_failed")
 
         pre_json = logs / "report_pre.json"
         try:
-            pre_report, pre_ms = run_tests(julia, env, wt, pre_json, timeout, logs, "pre")
+            pre_reports, pre_ms = run_tests_k(julia, env, wt, pre_json, timeout, logs, "pre", flaky_runs)
         except subprocess.TimeoutExpired:
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "timeout_pre", n_f2p, n_p2p, pre_ms, post_ms
+            return finish("timeout_pre")
 
-        if pre_report is None or not pre_report.get("ok", False):
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "broken_at_base", n_f2p, n_p2p, pre_ms, post_ms
+        if any(r is None or not r.get("ok", False) for r in pre_reports):
+            return finish("broken_at_base")
 
         if gold_patch and not apply_patch(gold_patch, wt, logs, "gold_patch"):
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "gold_patch_failed", n_f2p, n_p2p, pre_ms, post_ms
+            return finish("gold_patch_failed")
 
         post_json = logs / "report_post.json"
         try:
-            post_report, post_ms = run_tests(julia, env, wt, post_json, timeout, logs, "post")
+            post_reports, post_ms = run_tests_k(julia, env, wt, post_json, timeout, logs, "post", flaky_runs)
         except subprocess.TimeoutExpired:
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "timeout_post", n_f2p, n_p2p, pre_ms, post_ms
+            return finish("timeout_post")
 
-        if post_report is None or not post_report.get("ok", False):
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "gold_broken", n_f2p, n_p2p, pre_ms, post_ms
+        if any(r is None or not r.get("ok", False) for r in post_reports):
+            return finish("gold_broken")
 
-        f2p, p2p, new_fail = diff_reports(pre_report, post_report)
+        f2p, p2p, new_fail = diff_reports_stable(pre_reports, post_reports)
         n_f2p = len(f2p)
         n_p2p = len(p2p)
 
         if n_f2p < 1:
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "no_fail_to_pass", n_f2p, n_p2p, pre_ms, post_ms
-
+            return finish("no_fail_to_pass")
         if len(new_fail) > 0:
-            _cleanup_wt(clone, wt, logs, keep_wt)
-            return "regression", n_f2p, n_p2p, pre_ms, post_ms
+            return finish("regression")
 
         inst["FAIL_TO_PASS"] = f2p
         inst["PASS_TO_PASS"] = p2p
         inst["julia_version"] = jver
-        _cleanup_wt(clone, wt, logs, keep_wt)
-        return "valid", n_f2p, n_p2p, pre_ms, post_ms
+        if flaky_runs > 1:
+            inst["flaky_runs"] = flaky_runs
+        return finish("valid", inst)
 
     except Exception as exc:
         _log_err(logs, "unexpected.log", str(exc))
-        _cleanup_wt(clone, wt, logs, keep_wt)
-        return "error", n_f2p, n_p2p, pre_ms, post_ms
+        return finish("error")
+
+
+def _cleanup_env(env: pathlib.Path, logs: pathlib.Path):
+    """Drop the per-instance env to bound disk, keeping the resolved Manifest as
+    a reproducibility artifact (scaling plan P4 GC)."""
+    try:
+        manifest = env / "Manifest.toml"
+        if manifest.exists():
+            shutil.copy2(manifest, logs / "Manifest.resolved.toml")
+    except Exception:
+        pass
+    shutil.rmtree(env, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +840,42 @@ def cmd_self_test(_args):
     check("no_p2p", p2p2, [])
     check("no_new_fail", nf2, [])
 
+    print("\n=== self-test: stable_status / diff_reports_stable (flaky-K) ===")
+
+    # single run: reduces to plain status, never flaky
+    check("stable_k1", stable_status([{"tests": [
+        {"path": "a", "status": "fail"}, {"path": "b", "status": "pass"}]}]),
+        {"a": "fail", "b": "pass"})
+
+    # 3 consistent runs -> stable; 1 disagreement -> flaky; missing-in-one -> flaky
+    runs = [
+        {"tests": [{"path": "a", "status": "fail"}, {"path": "b", "status": "pass"},
+                   {"path": "c", "status": "pass"}, {"path": "d", "status": "pass"}]},
+        {"tests": [{"path": "a", "status": "fail"}, {"path": "b", "status": "pass"},
+                   {"path": "c", "status": "fail"}]},  # c flips, d missing
+        {"tests": [{"path": "a", "status": "fail"}, {"path": "b", "status": "pass"},
+                   {"path": "c", "status": "pass"}, {"path": "d", "status": "pass"}]},
+    ]
+    ss = stable_status(runs)
+    check("stable_fail", ss["a"], "fail")
+    check("stable_pass", ss["b"], "pass")
+    check("stable_flaky_flip", ss["c"], "flaky")
+    check("stable_flaky_missing", ss["d"], "flaky")
+
+    # diff_reports_stable with K=1 == diff_reports
+    f2p_s, p2p_s, nf_s = diff_reports_stable([pre], [post])
+    check("stable_eq_plain_f2p", sorted(f2p_s), ["a/b/test1"])
+    check("stable_eq_plain_p2p", sorted(p2p_s), ["a/b/test2"])
+    check("stable_eq_plain_newfail", sorted(nf_s), ["a/b/test4"])
+
+    # a path flaky in post is excluded from F2P (not counted as a fix)
+    pre_k = [{"tests": [{"path": "x", "status": "fail"}]},
+             {"tests": [{"path": "x", "status": "fail"}]}]
+    post_k = [{"tests": [{"path": "x", "status": "pass"}]},
+              {"tests": [{"path": "x", "status": "fail"}]}]  # flaky in post
+    f2p_f, _, _ = diff_reports_stable(pre_k, post_k)
+    check("flaky_post_excluded", f2p_f, [])
+
     print("\n=== self-test: check_resolved ===")
 
     report_ok = {"ok": True, "tests": [
@@ -746,6 +962,14 @@ def build_parser() -> argparse.ArgumentParser:
     vp.add_argument("--timeout", type=int, default=900, help="Test run timeout (s)")
     vp.add_argument("--keep-worktrees", action="store_true")
     vp.add_argument("--limit", type=int, default=0, help="Process at most N candidates")
+    vp.add_argument("--jobs", type=int, default=1,
+                    help="Validate N candidates in parallel (process pool)")
+    vp.add_argument("--resume", action="store_true",
+                    help="Skip candidates already in validate_summary.jsonl; rebuild --out from cache")
+    vp.add_argument("--flaky-runs", type=int, default=1, metavar="K",
+                    help="Run pre/post K times; drop tests inconsistent across runs (G4)")
+    vp.add_argument("--gc-env", action="store_true",
+                    help="Delete each per-instance env after validation (keep resolved Manifest)")
 
     # eval
     ep = sub.add_parser("eval", help="Evaluate model predictions")
