@@ -27,6 +27,11 @@ work/logs/validated.jsonl
 work/scale/
 work/scale_candidates.jsonl
 work/scale_valid.jsonl
+work/shard_*.tsv
+work/mine_shard_*
+work/repo300_meta.json
+work/pool*_candidates.jsonl
+work/pull_repos_*
 collect/repos.tsv
 
 # Keep provenance: mined candidates and the validate summary.
