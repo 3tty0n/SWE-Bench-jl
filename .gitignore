@@ -31,7 +31,10 @@ work/shard_*.tsv
 work/mine_shard_*
 work/repo300_meta.json
 work/pool*_candidates.jsonl
+work/pool_all*.jsonl
 work/pull_repos_*
+work/vshard_*.tsv
+work/val_*
 collect/repos.tsv
 
 # Keep provenance: mined candidates and the validate summary.
