@@ -2,11 +2,11 @@
 
 ## Overview
 
-**79** execution-validated instances mined from 13 pure-Julia packages (scaling in
+**115** execution-validated instances mined from 32 pure-Julia packages (scaling in
 progress — see [`scaling_plan.md`](scaling_plan.md) and [`tierA_runbook.md`](tierA_runbook.md);
 this count grows as the validation grind clears the candidate pool).
 
-## Per-repo distribution
+## Per-repo distribution (top contributors)
 
 | repo | instances |
 |---|---|
@@ -15,15 +15,13 @@ this count grows as the validation grind clears the candidate pool).
 | JuliaMath/QuadGK.jl | 10 |
 | JuliaCollections/OrderedCollections.jl | 9 |
 | JuliaMath/Combinatorics.jl | 8 |
+| AlgebraicJulia/CliqueTrees.jl | 7 |
 | JuliaMath/Primes.jl | 6 |
 | JuliaCollections/IterTools.jl | 5 |
-| JuliaIO/JSON.jl | 4 |
-| JuliaCollections/SortingAlgorithms.jl | 2 |
-| JuliaMath/HypergeometricFunctions.jl | 2 |
-| JuliaStrings/InlineStrings.jl | 2 |
-| JuliaData/SplitApplyCombine.jl | 1 |
-| GeoRegionsEcosystem/GeoRegions.jl | 1 |
-| **total** | **79** |
+| … and 24 more repositories | 41 |
+| **total** | **115** |
+
+The full per-repo breakdown is in `data/instances.jsonl` (each record carries its `repo`).
 
 ## Mining protocol
 
