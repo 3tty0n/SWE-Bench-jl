@@ -16,6 +16,15 @@ work/warm/
 work/eval/
 work/logs/*/
 work/*.log
+work/demo/
+
+# Scaling-pipeline regenerable caches (P1 registry checkout + enrichment cache,
+# P2 aggregated pool, P4 resume cache). Per-repo *.candidates.jsonl stays as provenance.
+work/General/
+work/discover_cache.json
+work/candidates_all.jsonl
+work/logs/validated.jsonl
+collect/repos.tsv
 
 # Keep provenance: mined candidates and the validate summary.
 !work/*.candidates.jsonl
