@@ -2,7 +2,7 @@
 
 **SWE-bench-jl** is, to our knowledge, the first **curated, execution-validated, Julia-specific SWE-bench-style benchmark with a pure-Julia evaluation harness**.
 
-It packages **45 real GitHub bug-fix tasks** from **five established Julia packages** using a SWE-bench-compatible instance schema. A candidate patch is judged by actually running the target package's Julia test suite before and after the patch. Evaluation requires Julia and git, but **does not require Docker or a Python runtime**.
+It packages **79 real GitHub bug-fix tasks** from **13 established Julia packages** using a SWE-bench-compatible instance schema. A candidate patch is judged by actually running the target package's Julia test suite before and after the patch. Evaluation requires Julia and git, but **does not require Docker or a Python runtime**.
 
 ## Why SWE-bench-jl?
 
@@ -20,16 +20,24 @@ SWE-bench-jl adapts the SWE-bench contract to these realities. It replaces pytes
 
 ## Dataset card
 
-SWE-bench-jl currently contains **45 execution-validated instances** mined from **5 pure-Julia packages**.
+SWE-bench-jl currently contains **79 execution-validated instances** mined from **13 pure-Julia packages**.
 
 | Repository                               | Instances |
 | ---------------------------------------- | --------: |
 | `JuliaCollections/DataStructures.jl`     |        19 |
+| `JuliaStats/Distances.jl`                |        10 |
+| `JuliaMath/QuadGK.jl`                     |        10 |
 | `JuliaCollections/OrderedCollections.jl` |         9 |
 | `JuliaMath/Combinatorics.jl`             |         8 |
+| `JuliaMath/Primes.jl`                    |         6 |
 | `JuliaCollections/IterTools.jl`          |         5 |
 | `JuliaIO/JSON.jl`                        |         4 |
-| **Total**                                |    **45** |
+| `JuliaCollections/SortingAlgorithms.jl`  |         2 |
+| `JuliaMath/HypergeometricFunctions.jl`   |         2 |
+| `JuliaStrings/InlineStrings.jl`          |         2 |
+| `JuliaData/SplitApplyCombine.jl`         |         1 |
+| `GeoRegionsEcosystem/GeoRegions.jl`      |         1 |
+| **Total**                                |    **79** |
 
 The validated dataset is stored in:
 
@@ -56,7 +64,7 @@ SWE-bench-jl is actively scaling toward **SWE-bench Lite size (300 validated ins
 | Pull (clone + mine) the top **300 repositories** into a candidate pool | ✅ **9,916 candidate tasks** mined (280 / 300 repos producing) via `collect/pull_repos.sh` |
 | Parallel, resumable validation of candidates into execution-validated instances | 🔄 in progress |
 
-- **Validated dataset (today):** 45 instances from 5 repositories (`data/instances.jsonl`).
+- **Validated dataset (today):** 79 instances from 13 repositories (`data/instances.jsonl`), growing as validation proceeds.
 - **Candidate coverage:** 300 repositories / 9,916 mined candidates.
 - **Reproduce the scale-up:** `N=300 collect/pull_repos.sh`, then validate with `harness/swebench_eval.py validate <pool> --out data/instances.jsonl --resume`; or run the whole pipeline with `collect/run_tierA.sh`. See [`docs/scaling_plan.md`](docs/scaling_plan.md) and [`docs/tierA_runbook.md`](docs/tierA_runbook.md).
 
@@ -243,7 +251,7 @@ JULIA_BIN=/path/to/julia bin/swebenchjl eval data/instances.jsonl predictions.js
 
 SWE-bench-jl is an initial v0 seed benchmark. Important limitations include:
 
-* small scale: 45 instances from 5 repositories,
+* still modest scale: 79 instances from 13 repositories (scaling in progress; see above),
 * focus on pure-Julia packages,
 * no human-verified subset yet,
 * possible leakage for PR-derived problem statements,
