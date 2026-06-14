@@ -125,6 +125,15 @@ above. Resume-safe: re-run it after any interruption.
 TOP=30 JOBS=4 collect/run_tierA.sh
 ```
 
+To only **obtain** (discover + clone + mine) the top-N repositories — without validating —
+use [`collect/pull_repos.sh`](../collect/pull_repos.sh), the general parameterized "pull N
+repos" script. It re-clones the registry if needed, ranks + gates repos, selects the top N
+(preferring license-verified ones), and mines them into one candidate pool:
+
+```bash
+N=300 JOBS=8 collect/pull_repos.sh            # pull the top 300 repos -> work/pool300_candidates.jsonl
+```
+
 ## 5. Expected yield & runtime
 
 - Density (current data): ~9 validated instances/repo; validation yield ~40–56%.
