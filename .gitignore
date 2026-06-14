@@ -24,6 +24,9 @@ work/General/
 work/discover_cache.json
 work/candidates_all.jsonl
 work/logs/validated.jsonl
+work/scale/
+work/scale_candidates.jsonl
+work/scale_valid.jsonl
 collect/repos.tsv
 
 # Keep provenance: mined candidates and the validate summary.
