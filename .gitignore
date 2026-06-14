@@ -35,6 +35,8 @@ work/pool_all*.jsonl
 work/pull_repos_*
 work/vshard_*.tsv
 work/val_*
+work/notice_cache.json
+work/new_repo_licenses.json
 collect/repos.tsv
 
 # Keep provenance: mined candidates and the validate summary.
