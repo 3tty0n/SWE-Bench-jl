@@ -67,21 +67,7 @@ See also:
 * [`docs/comparison_to_swebench.md`](docs/comparison_to_swebench.md) — comparison with the original SWE-bench design
 * [`NOTICES.md`](NOTICES.md) — third-party data provenance and upstream licenses
 
-## Scaling progress
-
-SWE-bench-jl has scaled past **SWE-bench Lite size (300 validated instances)** to **1,888 validated instances across 165 repositories**. The discovery → mining → validation pipeline covered **300 Julia repositories**:
-
-| stage | status |
-| --- | --- |
-| Repository discovery — rank the full [JuliaRegistries/General](https://github.com/JuliaRegistries/General) registry (~13.8k packages) into vetted, permissively-licensed, test-bearing repos | ✅ `collect/discover_repos.py` |
-| Pull (clone + mine) the top **300 repositories** into a candidate pool | ✅ **12,384 candidate tasks** mined via `collect/pull_repos.sh` |
-| Parallel, resumable validation of candidates into execution-validated instances | ✅ **1,888 validated** (15% yield over 12,384 candidates) |
-
-- **Validated dataset:** 1,888 instances from 165 repositories (`data/instances.jsonl`).
-- **Candidate coverage:** 300 repositories / 12,384 mined candidates.
-- **Reproduce the scale-up:** `N=300 collect/pull_repos.sh`, then validate with `harness/swebench_eval.py validate <pool> --out data/instances.jsonl --resume`; or run the whole pipeline with `collect/run_tierA.sh`. See [`docs/scaling_plan.md`](docs/scaling_plan.md) and [`docs/tierA_runbook.md`](docs/tierA_runbook.md).
-
-## Relationship to SWE-bench
+## Comparison to SWE-bench
 
 SWE-bench-jl follows the core SWE-bench idea: a task is resolved only if a model-generated patch makes previously failing tests pass while preserving previously passing tests.
 

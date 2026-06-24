@@ -12,8 +12,8 @@ license: MIT
 url: "https://github.com/3tty0n/SWE-bench-jl"
 repository-code: "https://github.com/3tty0n/SWE-bench-jl"
 abstract: >
-  SWE-bench-jl is the first curated, execution-validated, Julia-specific SWE-bench-style
-  benchmark. It contains 45 real GitHub bug-fix tasks from five established Julia packages,
+  SWE-bench-jl is a curated, execution-validated, Julia-specific SWE-bench-style
+  benchmark. It contains 1888 real GitHub bug-fix tasks from five established Julia packages,
   with a SWE-bench-compatible instance schema and a pure-Julia evaluation harness that
   decides resolved by running each package's test suite before and after a candidate patch.
 keywords:
