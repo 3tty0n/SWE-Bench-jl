@@ -32,6 +32,9 @@ work/mine_shard_*
 work/repo300_meta.json
 work/pool*_candidates.jsonl
 work/pool_all*.jsonl
+work/full_pool.jsonl
+work/merge_base.jsonl
+work/instances.enriched.jsonl
 work/pull_repos_*
 work/vshard_*.tsv
 work/val_*
